@@ -1,6 +1,5 @@
 # settings.py
 # All game constants live here.
-# If you want to tweak anything — speed, colors, grid size — this is the only file you touch.
 
 # --- Screen ---
 SCREEN_WIDTH  = 600
