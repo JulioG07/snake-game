@@ -14,10 +14,14 @@ RIGHT = (1, 0)
 
 
 class Snake:
-    def __init__(self):
+    def __init__(self, grid_width=GRID_WIDTH, grid_height=GRID_HEIGHT):
+        # Store the grid dimensions so hit_wall() knows where the edges are
+        self.grid_width  = grid_width
+        self.grid_height = grid_height
+
         # Start in the middle of the grid
-        start_x = GRID_WIDTH // 2
-        start_y = GRID_HEIGHT // 2
+        start_x = grid_width  // 2
+        start_y = grid_height // 2
 
         # Build a body of 3 segments in a row (head first)
         self.body = []
@@ -25,7 +29,7 @@ class Snake:
             self.body.append((start_x - i, start_y))
 
         # Start moving right
-        self.direction = RIGHT
+        self.direction      = RIGHT
         self.next_direction = RIGHT
 
         # Becomes True when the snake should grow on its next move
@@ -81,11 +85,11 @@ class Snake:
         return False
 
     def hit_wall(self):
-        # Check if the head went off the grid
+        # Check if the head went off the grid — uses stored dimensions, not hardcoded constants
         head_x, head_y = self.get_head()
-        if head_x < 0 or head_x >= GRID_WIDTH:
+        if head_x < 0 or head_x >= self.grid_width:
             return True
-        if head_y < 0 or head_y >= GRID_HEIGHT:
+        if head_y < 0 or head_y >= self.grid_height:
             return True
         return False
 
