@@ -15,6 +15,13 @@ CELL_SIZE     = 30          # pixels per grid cell
 GRID_WIDTH    = SCREEN_WIDTH  // CELL_SIZE   # 20 cells across
 GRID_HEIGHT   = SCREEN_HEIGHT // CELL_SIZE   # 20 cells tall
 
+# --- Twisted mode arena (larger than Classic) ---
+# 720 / 30 = 24 cells across and tall — 4 extra cells per side
+TWISTED_SCREEN_WIDTH  = 720
+TWISTED_SCREEN_HEIGHT = 720
+TWISTED_GRID_WIDTH    = TWISTED_SCREEN_WIDTH  // CELL_SIZE   # 24 cells across
+TWISTED_GRID_HEIGHT   = TWISTED_SCREEN_HEIGHT // CELL_SIZE   # 24 cells tall
+
 # --- Snake ---
 SNAKE_SPEED        = 8      # cells per second (base speed)
 SPEED_BOOST_MULT   = 1.5    # speed multiplier when boost power-up is active
@@ -53,6 +60,7 @@ PURPLE      = (180, 0,   255)   # double points power-up
 ORANGE      = (255, 140, 0)     # shrink power-up
 
 WHITE_GRAY  = (180, 180, 180)   # obstacles
+MYSTERY     = (220, 0,   220)   # mystery box
 
 # --- Game States ---
 # The game is always in exactly one of these states.
