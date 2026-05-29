@@ -14,8 +14,8 @@ from game.settings import CELL_SIZE, GRID_WIDTH, GRID_HEIGHT, MYSTERY
 GOOD_EFFECTS = [
     "speed_boost",      # snake moves faster for POWERUP_DURATION seconds
     "golden_fruit",     # spawns a gold fruit on the grid worth 5 points
+    "bonus_spawn",      # instantly spawns 2-3 extra food items on the grid
     # "double_points",  # coming soon
-    # "bonus_spawn",    # coming soon
     # "magnet",         # coming soon
 ]
 

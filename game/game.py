@@ -4,12 +4,13 @@
 # Runs the main loop and draws the screen.
 
 import pygame
+import random
 from game.settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT, TITLE, FPS,
     TWISTED_SCREEN_WIDTH, TWISTED_SCREEN_HEIGHT,
     TWISTED_GRID_WIDTH, TWISTED_GRID_HEIGHT,
     CELL_SIZE, GRID_WIDTH, GRID_HEIGHT,
-    GRAY, WHITE, GREEN, GOLD, BLUE,
+    GRAY, WHITE, GREEN, GOLD, BLUE, ORANGE,
     SNAKE_SPEED, SPEED_BOOST_MULT, POWERUP_DURATION,
     STATE_MENU, STATE_PLAYING, STATE_GAME_OVER,
 )
@@ -89,6 +90,10 @@ class Game:
         # Golden fruit — inactive until the mystery box gives it
         self.golden_fruit = GoldenFruit(gw, gh)
 
+        # Bonus foods — list of (x, y) positions that spawn when bonus_spawn rolls
+        # Each item is eaten individually and removed from the list
+        self.bonus_foods = []
+
     def _apply_effect(self, effect):
         # Apply the given effect to the game and start its countdown timer.
         # Each new effect overwrites the previous one (only one active at a time).
@@ -104,6 +109,24 @@ class Game:
             occupied = set(self.snake.body) | {self.food.position} | {self.mystery_box.position}
             self.golden_fruit.spawn(occupied)
             # Golden fruit has no timer so we don't need active_effect or effect_timer
+            self.active_effect = None
+            self.effect_timer  = 0.0
+
+        elif effect == "bonus_spawn":
+            # Spawn 2-3 extra food items on random empty cells
+            occupied = set(self.snake.body) | {self.food.position} | {self.mystery_box.position}
+            count = random.randint(2, 3)
+            for _ in range(count):
+                while True:
+                    x = random.randint(0, self.snake.grid_width  - 1)
+                    y = random.randint(0, self.snake.grid_height - 1)
+                    pos = (x, y)
+                    # Make sure it doesn't overlap anything already on the grid
+                    if pos not in occupied:
+                        self.bonus_foods.append(pos)
+                        occupied.add(pos)  # so the next item doesn't land on this one
+                        break
+            # No timed effect on the snake
             self.active_effect = None
             self.effect_timer  = 0.0
 
@@ -144,7 +167,11 @@ class Game:
                 elif self.state == STATE_GAME_OVER:
                     # R takes the player back to the menu so they can pick a mode again
                     if event.key == pygame.K_r:
-                        self.state = STATE_MENU
+                        self.state    = STATE_MENU
+                        self.screen_w = SCREEN_WIDTH
+                        self.screen_h = SCREEN_HEIGHT
+                        # Resize window back to the standard menu size
+                        self.screen   = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 
         return True
 
@@ -201,6 +228,11 @@ class Game:
                     self.score += self.golden_fruit.points   # +5 points
                     self.golden_fruit.despawn()              # remove from grid
 
+            # Did the snake's head land on a bonus food item? (Twisted only)
+            if self.mode == "twisted" and head in self.bonus_foods:
+                self.bonus_foods.remove(head)   # remove just that one item
+                self.score += 1                 # worth 1 point like regular food
+
             # Did the snake die (hit a wall or itself)?
             if self.snake.hit_wall() or self.snake.hit_self():
                 self.state = STATE_GAME_OVER
@@ -218,6 +250,12 @@ class Game:
             if self.mode == "twisted":
                 self.mystery_box.draw(self.screen)
                 self.golden_fruit.draw(self.screen)   # only draws if active
+
+                # Draw each bonus food as an orange square
+                for pos in self.bonus_foods:
+                    x, y = pos
+                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                    pygame.draw.rect(self.screen, ORANGE, rect)
 
             self.snake.draw(self.screen)
 
