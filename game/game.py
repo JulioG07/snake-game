@@ -3,6 +3,7 @@
 # It owns the snake, food, and (in Twisted mode) the mystery box.
 # Runs the main loop and draws the screen.
 
+import math
 import pygame
 import random
 from game.settings import (
@@ -10,8 +11,8 @@ from game.settings import (
     TWISTED_SCREEN_WIDTH, TWISTED_SCREEN_HEIGHT,
     TWISTED_GRID_WIDTH, TWISTED_GRID_HEIGHT,
     CELL_SIZE, GRID_WIDTH, GRID_HEIGHT,
-    GRAY, WHITE, GREEN, GOLD, BLUE, ORANGE,
-    SNAKE_SPEED, SPEED_BOOST_MULT, POWERUP_DURATION,
+    GRAY, WHITE, GREEN, GOLD, BLUE, ORANGE, DECOY, PORTAL_COLOR,
+    SNAKE_SPEED, SPEED_BOOST_MULT, POWERUP_DURATION, SPEED_BOOST_DURATION, MAGNET_DURATION, DECOY_DURATION, PORTAL_DURATION, MAGNET_RANGE,
     STATE_MENU, STATE_PLAYING, STATE_GAME_OVER,
 )
 from game.snake import Snake, UP, DOWN, LEFT, RIGHT
@@ -48,7 +49,7 @@ class Game:
         # Mystery box (Twisted mode only)
         self.mystery_box      = None
         self.box_spawn_timer  = 0     # counts up; box spawns when it hits BOX_SPAWN_RATE
-        self.BOX_SPAWN_RATE   = 10.0  # seconds between mystery box spawns
+        self.BOX_SPAWN_RATE   = 8.0   # seconds between mystery box spawns
 
         # Active effect tracking — only one effect runs at a time
         self.active_effect  = None   # name of the current effect, e.g. "speed_boost"
@@ -94,6 +95,31 @@ class Game:
         # Each item is eaten individually and removed from the list
         self.bonus_foods = []
 
+        # Split decoy — stationary segments left behind after the tail breaks off
+        self.decoy_segments = []
+        self.decoy_timer    = 0.0
+
+        # Portals — two linked teleport tiles; empty list when inactive
+        self.portals          = []
+        self.portal_timer     = 0.0
+        self.portal_cooldown  = 0   # steps remaining before portals can fire again
+
+    def _magnet_pull(self, food_pos, head):
+        fx, fy = food_pos
+        hx, hy = head
+        dx, dy = hx - fx, hy - fy
+        if abs(dx) + abs(dy) > MAGNET_RANGE:
+            return food_pos  # out of range, don't move
+        # Step one cell along the axis with the larger gap
+        if abs(dx) >= abs(dy):
+            nx, ny = fx + (1 if dx > 0 else -1 if dx < 0 else 0), fy
+        else:
+            nx, ny = fx, fy + (1 if dy > 0 else -1 if dy < 0 else 0)
+        # Stay on the grid
+        if 0 <= nx < self.snake.grid_width and 0 <= ny < self.snake.grid_height:
+            return (nx, ny)
+        return food_pos
+
     def _apply_effect(self, effect):
         # Apply the given effect to the game and start its countdown timer.
         # Each new effect overwrites the previous one (only one active at a time).
@@ -101,8 +127,11 @@ class Game:
         self.effect_timer  = POWERUP_DURATION
 
         if effect == "speed_boost":
-            # Make the snake step faster by shrinking the delay between moves
+            self.effect_timer = SPEED_BOOST_DURATION
             self.move_delay = 1.0 / (SNAKE_SPEED * SPEED_BOOST_MULT)
+
+        elif effect == "magnet":
+            self.effect_timer = MAGNET_DURATION
 
         elif effect == "golden_fruit":
             # Spawn the golden fruit on an empty cell — no timed effect on the snake
@@ -127,6 +156,34 @@ class Game:
                         occupied.add(pos)  # so the next item doesn't land on this one
                         break
             # No timed effect on the snake
+            self.active_effect = None
+            self.effect_timer  = 0.0
+
+        elif effect == "portal":
+            # Spawn two portals at random grid positions — fully random, could be near borders
+            occupied = set(self.snake.body) | {self.food.position} | {self.mystery_box.position}
+            self.portals = []
+            for _ in range(2):
+                while True:
+                    x = random.randint(0, self.snake.grid_width  - 1)
+                    y = random.randint(0, self.snake.grid_height - 1)
+                    pos = (x, y)
+                    if pos not in occupied:
+                        self.portals.append(pos)
+                        occupied.add(pos)
+                        break
+            self.portal_timer    = PORTAL_DURATION
+            self.portal_cooldown = 0
+            self.active_effect   = None
+            self.effect_timer    = 0.0
+
+        elif effect == "split_decoy":
+            # 30-50% of the tail breaks off and becomes a stationary obstacle
+            amount = max(1, int(len(self.snake.body) * random.uniform(0.30, 0.50)))
+            amount = min(amount, len(self.snake.body) - 1)  # always keep the head
+            self.decoy_segments.extend(self.snake.body[-amount:])
+            self.snake.shrink(amount)
+            self.decoy_timer   = DECOY_DURATION
             self.active_effect = None
             self.effect_timer  = 0.0
 
@@ -187,6 +244,20 @@ class Game:
             if self.effect_timer <= 0:
                 self._end_effect()
 
+        # --- Portal timer ---
+        if self.portals:
+            self.portal_timer -= dt
+            if self.portal_timer <= 0:
+                self.portals      = []
+                self.portal_timer = 0.0
+
+        # --- Decoy segment timer ---
+        if self.decoy_segments:
+            self.decoy_timer -= dt
+            if self.decoy_timer <= 0:
+                self.decoy_segments = []
+                self.decoy_timer    = 0.0
+
         # --- Twisted mode: mystery box spawning ---
         if self.mode == "twisted":
             if not self.mystery_box.active:
@@ -207,6 +278,27 @@ class Game:
             self.snake.move()
 
             head = self.snake.get_head()
+
+            # Portal teleport — runs first so the correct head pos flows into all checks below
+            if self.mode == "twisted" and self.portals:
+                if self.portal_cooldown > 0:
+                    self.portal_cooldown -= 1
+                elif head == self.portals[0]:
+                    self.snake.body[0] = self.portals[1]
+                    head = self.portals[1]
+                    self.portal_cooldown = 2
+                elif head == self.portals[1]:
+                    self.snake.body[0] = self.portals[0]
+                    head = self.portals[0]
+                    self.portal_cooldown = 2
+
+            # Magnet: pull nearby food one step toward the head before collision checks
+            if self.active_effect == "magnet":
+                self.food.position = self._magnet_pull(self.food.position, head)
+                if self.golden_fruit.active:
+                    self.golden_fruit.position = self._magnet_pull(self.golden_fruit.position, head)
+                for i, pos in enumerate(self.bonus_foods):
+                    self.bonus_foods[i] = self._magnet_pull(pos, head)
 
             # Did the snake's head land on the regular food?
             if head == self.food.position:
@@ -233,8 +325,9 @@ class Game:
                 self.bonus_foods.remove(head)   # remove just that one item
                 self.score += 1                 # worth 1 point like regular food
 
-            # Did the snake die (hit a wall or itself)?
-            if self.snake.hit_wall() or self.snake.hit_self():
+            # Did the snake die (hit a wall, itself, or a decoy segment)?
+            hit_decoy = self.mode == "twisted" and head in self.decoy_segments
+            if self.snake.hit_wall() or self.snake.hit_self() or hit_decoy:
                 self.state = STATE_GAME_OVER
 
     def draw(self):
@@ -256,6 +349,39 @@ class Game:
                     x, y = pos
                     rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
                     pygame.draw.rect(self.screen, ORANGE, rect)
+
+                # Draw split decoy segments as faded snake-green squares
+                for pos in self.decoy_segments:
+                    x, y = pos
+                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                    pygame.draw.rect(self.screen, DECOY, rect)
+                    pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
+
+                # Draw portals as pulsing ring + inner circle
+                if self.portals:
+                    t = pygame.time.get_ticks() / 1000.0
+                    inner_r = max(2, int(CELL_SIZE * 0.18 + CELL_SIZE * 0.10 * math.sin(t * 5)))
+                    outer_r = CELL_SIZE // 2 - 1
+                    for pos in self.portals:
+                        cx = pos[0] * CELL_SIZE + CELL_SIZE // 2
+                        cy = pos[1] * CELL_SIZE + CELL_SIZE // 2
+                        pygame.draw.circle(self.screen, PORTAL_COLOR, (cx, cy), outer_r, 3)
+                        pygame.draw.circle(self.screen, PORTAL_COLOR, (cx, cy), inner_r)
+
+                # Magnet animation: pulsing ring around food within pull range
+                if self.active_effect == "magnet":
+                    t = pygame.time.get_ticks() / 1000.0
+                    radius = int(CELL_SIZE // 2 + 4 + 3 * math.sin(t * 6))
+                    head = self.snake.get_head()
+                    candidates = [self.food.position]
+                    if self.golden_fruit.active:
+                        candidates.append(self.golden_fruit.position)
+                    candidates.extend(self.bonus_foods)
+                    for pos in candidates:
+                        if abs(pos[0] - head[0]) + abs(pos[1] - head[1]) <= MAGNET_RANGE:
+                            cx = pos[0] * CELL_SIZE + CELL_SIZE // 2
+                            cy = pos[1] * CELL_SIZE + CELL_SIZE // 2
+                            pygame.draw.circle(self.screen, (0, 220, 220), (cx, cy), radius, 2)
 
             self.snake.draw(self.screen)
 
@@ -305,7 +431,7 @@ class Game:
         # The main game loop — keeps running until the window is closed
         running = True
         while running:
-            dt = self.clock.tick(FPS) / 1000.0  # time since last frame in seconds
+            dt = self.clock.tick_busy_loop(FPS) / 1000.0  # time since last frame in seconds
             running = self.handle_events()
             self.update(dt)
             self.draw()
