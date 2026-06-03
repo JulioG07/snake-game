@@ -5,7 +5,7 @@
 SCREEN_WIDTH  = 600
 SCREEN_HEIGHT = 600
 TITLE         = "Snake, but better."
-FPS           = 60          # frames per second — how smooth the game runs
+FPS           = 120         # frames per second — how smooth the game runs
 
 # --- Grid ---
 # The game world is divided into a grid of cells.
@@ -30,8 +30,13 @@ INITIAL_LENGTH     = 3      # how many segments the snake starts with
 SHRINK_AMOUNT      = 3      # how many segments the shrink power-up removes
 
 # --- Power-ups ---
-POWERUP_DURATION   = 5.0    # seconds a timed power-up lasts
-POWERUP_SPAWN_RATE = 10.0   # seconds between power-up spawns
+POWERUP_DURATION        = 5.0   # seconds a timed power-up lasts (default)
+SPEED_BOOST_DURATION    = 7.0   # seconds speed boost lasts
+MAGNET_DURATION         = 7.0   # seconds magnet lasts
+POWERUP_SPAWN_RATE      = 10.0  # seconds between power-up spawns
+DECOY_DURATION          = 15.0  # seconds before split decoy segments disappear
+PORTAL_DURATION         = 15.0  # seconds portals stay active
+MAGNET_RANGE            = 3     # Manhattan distance at which food gets pulled toward the head
 
 # --- Obstacles ---
 OBSTACLE_SPAWN_RATE = 30.0  # seconds between obstacle spawns
@@ -61,6 +66,8 @@ ORANGE      = (255, 140, 0)     # shrink power-up
 
 WHITE_GRAY  = (180, 180, 180)   # obstacles
 MYSTERY     = (220, 0,   220)   # mystery box
+DECOY       = (120, 180, 120)   # split decoy segments (faded snake green)
+PORTAL_COLOR = (150, 50, 255)   # portal rings
 
 # --- Game States ---
 # The game is always in exactly one of these states.

@@ -15,14 +15,12 @@ GOOD_EFFECTS = [
     "speed_boost",      # snake moves faster for POWERUP_DURATION seconds
     "golden_fruit",     # spawns a gold fruit on the grid worth 5 points
     "bonus_spawn",      # instantly spawns 2-3 extra food items on the grid
-    # "double_points",  # coming soon
-    # "magnet",         # coming soon
+    "magnet",           # food within MAGNET_RANGE cells is pulled toward the head
 ]
 
 BAD_EFFECTS = [
-    # "slow_down",      # coming soon
-    # "shrink",         # coming soon
-    # "split_decoy",    # coming soon
+    "split_decoy",      # 30-50% of the snake's tail breaks off as a stationary obstacle
+    "portal",           # two random portals appear; entering one exits the other
 ]
 
 
@@ -50,7 +48,7 @@ class MysteryBox:
 
     def roll_effect(self):
         # Stage 1 — decide which pool to pull from
-        if random.randint(1, 100) <= 70:
+        if random.randint(1, 100) <= 60:
             pool = GOOD_EFFECTS
         else:
             pool = BAD_EFFECTS
