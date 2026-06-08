@@ -3,6 +3,7 @@
 # It owns the snake, food, and (in Twisted mode) the mystery box.
 # Runs the main loop and draws the screen.
 
+import json
 import math
 import pygame
 import random
@@ -11,9 +12,14 @@ from game.settings import (
     TWISTED_SCREEN_WIDTH, TWISTED_SCREEN_HEIGHT,
     TWISTED_GRID_WIDTH, TWISTED_GRID_HEIGHT,
     CELL_SIZE, GRID_WIDTH, GRID_HEIGHT,
-    GRAY, WHITE, GREEN, GOLD, BLUE, ORANGE, DECOY, PORTAL_COLOR,
+    GRAY, WHITE, GREEN, GOLD, BLUE, ORANGE, DECOY, PORTAL_COLOR, WHITE_GRAY,
     SNAKE_SPEED, SPEED_BOOST_MULT, POWERUP_DURATION, SPEED_BOOST_DURATION, MAGNET_DURATION, DECOY_DURATION, PORTAL_DURATION, MAGNET_RANGE,
+    EVENT_COOLDOWN, OBSTACLE_CHUNK_INTERVAL, OBSTACLE_MAX_CHUNKS, OBSTACLE_ACTIVE_TIME, OBSTACLE_MIN_CELLS, OBSTACLE_MAX_CELLS,
+    ANACONDA_LENGTH, ANACONDA_SPEED, ANACONDA_BODY, ANACONDA_HEAD_C,
+    HORDE_MIN_COUNT, HORDE_MAX_COUNT, HORDE_SNAKE_MIN_LEN, HORDE_SNAKE_MAX_LEN,
+    HORDE_SPEED, HORDE_WARNING_TIME, HORDE_VULNERABLE, BABY_SNAKE, VULNERABLE,
     STATE_MENU, STATE_PLAYING, STATE_GAME_OVER,
+    HIGH_SCORE_FILE,
 )
 from game.snake import Snake, UP, DOWN, LEFT, RIGHT
 from game.food import Food, GoldenFruit
@@ -54,6 +60,8 @@ class Game:
         # Active effect tracking — only one effect runs at a time
         self.active_effect  = None   # name of the current effect, e.g. "speed_boost"
         self.effect_timer   = 0.0    # counts down to 0, then the effect ends
+
+        self.high_score = self._load_high_score()
 
     def start_game(self, mode):
         # Called when the player picks a mode from the menu.
@@ -103,6 +111,271 @@ class Game:
         self.portals          = []
         self.portal_timer     = 0.0
         self.portal_cooldown  = 0   # steps remaining before portals can fire again
+
+        # Random event system
+        self.active_event      = None
+        self.event_cooldown    = EVENT_COOLDOWN
+        self.event_phase       = None   # "spawning", "active", or "despawning"
+        self.event_phase_timer = 0.0
+        self.chunk_timer       = 0.0
+        self.obstacle_chunks   = []
+        self.chunks_spawned    = 0
+
+        # Anaconda event
+        self.anaconda_cells  = []
+        self.anaconda_head   = (0, 0)
+        self.anaconda_dir    = (0, 0)
+        self.anaconda_timer  = 0.0
+
+        # Horde event — list of dicts: {'cells', 'ghost_head', 'max_len'}
+        self.horde_snakes        = []
+        self.horde_dir           = (0, 0)
+        self.horde_timer         = 0.0
+        self.horde_warning_timer = 0.0   # counts down warning phase
+
+    def _load_high_score(self):
+        try:
+            with open(HIGH_SCORE_FILE, 'r') as f:
+                return json.load(f).get('high_score', 0)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return 0
+
+    def _save_high_score(self):
+        if self.score > self.high_score:
+            self.high_score = self.score
+            with open(HIGH_SCORE_FILE, 'w') as f:
+                json.dump({'high_score': self.high_score}, f)
+
+    def _all_occupied(self):
+        occupied = set(self.snake.body) | {self.food.position}
+        if self.mystery_box.active:
+            occupied.add(self.mystery_box.position)
+        if self.golden_fruit.active:
+            occupied.add(self.golden_fruit.position)
+        occupied.update(self.bonus_foods)
+        occupied.update(self.decoy_segments)
+        occupied.update(self.portals)
+        for chunk in self.obstacle_chunks:
+            occupied.update(chunk)
+        occupied.update(self.anaconda_cells)
+        for s in self.horde_snakes:
+            occupied.update(s['cells'])
+        return occupied
+
+    def _gen_obstacle_chunk(self, occupied):
+        size = random.randint(OBSTACLE_MIN_CELLS, OBSTACLE_MAX_CELLS)
+        # Find a valid anchor cell away from the very edge so chunks feel mid-grid
+        for _ in range(200):
+            ax = random.randint(1, self.snake.grid_width  - 2)
+            ay = random.randint(1, self.snake.grid_height - 2)
+            if (ax, ay) not in occupied:
+                break
+        else:
+            return []  # grid too crowded, skip this chunk
+
+        cells = [(ax, ay)]
+        local_occ = set(occupied) | {(ax, ay)}
+        dirs = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+
+        for _ in range(size - 1):
+            candidates = list(cells)
+            random.shuffle(candidates)
+            placed = False
+            for cx, cy in candidates:
+                shuffled_dirs = dirs[:]
+                random.shuffle(shuffled_dirs)
+                for dx, dy in shuffled_dirs:
+                    nx, ny = cx + dx, cy + dy
+                    if (0 <= nx < self.snake.grid_width and
+                            0 <= ny < self.snake.grid_height and
+                            (nx, ny) not in local_occ):
+                        cells.append((nx, ny))
+                        local_occ.add((nx, ny))
+                        placed = True
+                        break
+                if placed:
+                    break
+
+        return cells
+
+    def _start_random_event(self):
+        choice = random.choice(["obstacle_wave", "anaconda", "horde"])
+        if choice == "obstacle_wave":
+            self.active_event    = "obstacle_wave"
+            self.event_phase     = "spawning"
+            self.chunk_timer     = OBSTACLE_CHUNK_INTERVAL
+            self.chunks_spawned  = 0
+            self.obstacle_chunks = []
+        elif choice == "horde":
+            self.active_event        = "horde"
+            self.horde_warning_timer = HORDE_WARNING_TIME
+            self.horde_timer         = 0.0
+            self.horde_snakes        = []
+            horizontal = random.choice([True, False])
+            if horizontal:
+                self.horde_dir = (1, 0) if random.choice([True, False]) else (-1, 0)
+                dx = self.horde_dir[0]
+                count = random.randint(HORDE_MIN_COUNT, HORDE_MAX_COUNT)
+                section = self.snake.grid_height // count
+                for i in range(count):
+                    row     = random.randint(i * section, (i + 1) * section - 1)
+                    max_len = random.randint(HORDE_SNAKE_MIN_LEN, HORDE_SNAKE_MAX_LEN)
+                    stagger = random.randint(0, 5) * (i + 1)
+                    gx = (-1 - stagger) if dx == 1 else (self.snake.grid_width + stagger)
+                    self.horde_snakes.append({'cells': [], 'ghost_head': (gx, row), 'max_len': max_len})
+            else:
+                self.horde_dir = (0, 1) if random.choice([True, False]) else (0, -1)
+                dy = self.horde_dir[1]
+                count = random.randint(HORDE_MIN_COUNT, HORDE_MAX_COUNT)
+                section = self.snake.grid_width // count
+                for i in range(count):
+                    col     = random.randint(i * section, (i + 1) * section - 1)
+                    max_len = random.randint(HORDE_SNAKE_MIN_LEN, HORDE_SNAKE_MAX_LEN)
+                    stagger = random.randint(0, 5) * (i + 1)
+                    gy = (-1 - stagger) if dy == 1 else (self.snake.grid_height + stagger)
+                    self.horde_snakes.append({'cells': [], 'ghost_head': (col, gy), 'max_len': max_len})
+
+        else:
+            self.active_event   = "anaconda"
+            self.anaconda_cells = []
+            self.anaconda_timer = ANACONDA_SPEED  # fire first step immediately
+            if random.choice([True, False]):  # horizontal
+                row = random.randint(0, self.snake.grid_height - 1)
+                if random.choice([True, False]):  # left → right
+                    self.anaconda_dir  = (1, 0)
+                    self.anaconda_head = (-1, row)
+                else:                            # right → left
+                    self.anaconda_dir  = (-1, 0)
+                    self.anaconda_head = (self.snake.grid_width, row)
+            else:                              # vertical
+                col = random.randint(0, self.snake.grid_width - 1)
+                if random.choice([True, False]):  # top → bottom
+                    self.anaconda_dir  = (0, 1)
+                    self.anaconda_head = (col, -1)
+                else:                            # bottom → top
+                    self.anaconda_dir  = (0, -1)
+                    self.anaconda_head = (col, self.snake.grid_height)
+
+    def _check_horde_collision(self):
+        all_horde_cells = {c for s in self.horde_snakes for c in s['cells']}
+        if not all_horde_cells:
+            return
+        vuln_len = min(HORDE_VULNERABLE, len(self.snake.body))
+        for i, pos in enumerate(self.snake.body):
+            if pos in all_horde_cells:
+                if i < vuln_len or len(self.snake.body) <= HORDE_VULNERABLE:
+                    self.state = STATE_GAME_OVER
+                else:
+                    severed = list(self.snake.body[i:])
+                    self.snake.body = self.snake.body[:i]
+                    self.decoy_segments.extend(severed)
+                    self.decoy_timer = DECOY_DURATION
+                return
+
+    def _update_active_event(self, dt):
+        if self.active_event == "obstacle_wave":
+            self.chunk_timer += dt
+
+            if self.event_phase == "spawning":
+                if self.chunk_timer >= OBSTACLE_CHUNK_INTERVAL:
+                    self.chunk_timer = 0.0
+                    chunk = self._gen_obstacle_chunk(self._all_occupied())
+                    if chunk:
+                        self.obstacle_chunks.append(chunk)
+                    self.chunks_spawned += 1
+                    if self.chunks_spawned >= OBSTACLE_MAX_CHUNKS:
+                        self.event_phase       = "active"
+                        self.event_phase_timer = OBSTACLE_ACTIVE_TIME
+                        self.chunk_timer       = 0.0
+
+            elif self.event_phase == "active":
+                self.event_phase_timer -= dt
+                if self.event_phase_timer <= 0:
+                    self.event_phase = "despawning"
+                    self.chunk_timer = 0.0
+
+            elif self.event_phase == "despawning":
+                if self.chunk_timer >= OBSTACLE_CHUNK_INTERVAL:
+                    self.chunk_timer = 0.0
+                    if self.obstacle_chunks:
+                        self.obstacle_chunks.pop(0)
+                    if not self.obstacle_chunks:
+                        self.active_event    = None
+                        self.event_phase     = None
+                        self.chunks_spawned  = 0
+                        self.event_cooldown  = EVENT_COOLDOWN
+
+        elif self.active_event == "anaconda":
+            self.anaconda_timer += dt
+            if self.anaconda_timer >= ANACONDA_SPEED:
+                self.anaconda_timer = 0.0
+                dx, dy = self.anaconda_dir
+                hx, hy = self.anaconda_head
+                self.anaconda_head = (hx + dx, hy + dy)
+                hx, hy = self.anaconda_head
+
+                # Add new head cell only if it's on the grid
+                if 0 <= hx < self.snake.grid_width and 0 <= hy < self.snake.grid_height:
+                    self.anaconda_cells.insert(0, (hx, hy))
+
+                head_exited = (
+                    (dx ==  1 and hx >= self.snake.grid_width)  or
+                    (dx == -1 and hx < 0)                       or
+                    (dy ==  1 and hy >= self.snake.grid_height)  or
+                    (dy == -1 and hy < 0)
+                )
+
+                # Trim tail once full length is reached OR while exiting
+                if len(self.anaconda_cells) > ANACONDA_LENGTH or head_exited:
+                    if self.anaconda_cells:
+                        self.anaconda_cells.pop()
+
+                if head_exited and not self.anaconda_cells:
+                    self.active_event   = None
+                    self.anaconda_cells = []
+                    self.event_cooldown = EVENT_COOLDOWN
+
+        elif self.active_event == "horde":
+            if self.horde_warning_timer > 0:
+                self.horde_warning_timer -= dt
+                return  # wait out the warning phase before snakes move
+
+            self.horde_timer += dt
+            if self.horde_timer >= HORDE_SPEED:
+                self.horde_timer = 0.0
+                dx, dy = self.horde_dir
+                for s in self.horde_snakes:
+                    hx, hy = s['ghost_head']
+                    s['ghost_head'] = (hx + dx, hy + dy)
+                    hx, hy = s['ghost_head']
+                    if 0 <= hx < self.snake.grid_width and 0 <= hy < self.snake.grid_height:
+                        s['cells'].insert(0, (hx, hy))
+                    head_off = (
+                        (dx ==  1 and hx >= self.snake.grid_width)  or
+                        (dx == -1 and hx < 0)                       or
+                        (dy ==  1 and hy >= self.snake.grid_height)  or
+                        (dy == -1 and hy < 0)
+                    )
+                    if len(s['cells']) > s['max_len'] or head_off:
+                        if s['cells']:
+                            s['cells'].pop()
+
+                self._check_horde_collision()
+
+                # Event ends when all snakes have fully exited
+                if all(not s['cells'] for s in self.horde_snakes):
+                    gw, gh = self.snake.grid_width, self.snake.grid_height
+                    all_exited = all(
+                        (dx ==  1 and s['ghost_head'][0] >= gw)  or
+                        (dx == -1 and s['ghost_head'][0] < 0)    or
+                        (dy ==  1 and s['ghost_head'][1] >= gh)  or
+                        (dy == -1 and s['ghost_head'][1] < 0)
+                        for s in self.horde_snakes
+                    )
+                    if all_exited:
+                        self.active_event  = None
+                        self.horde_snakes  = []
+                        self.event_cooldown = EVENT_COOLDOWN
 
     def _magnet_pull(self, food_pos, head):
         fx, fy = food_pos
@@ -258,6 +531,15 @@ class Game:
                 self.decoy_segments = []
                 self.decoy_timer    = 0.0
 
+        # --- Random event system (Twisted only) ---
+        if self.mode == "twisted":
+            if self.active_event is None:
+                self.event_cooldown -= dt
+                if self.event_cooldown <= 0:
+                    self._start_random_event()
+            else:
+                self._update_active_event(dt)
+
         # --- Twisted mode: mystery box spawning ---
         if self.mode == "twisted":
             if not self.mystery_box.active:
@@ -325,10 +607,18 @@ class Game:
                 self.bonus_foods.remove(head)   # remove just that one item
                 self.score += 1                 # worth 1 point like regular food
 
-            # Did the snake die (hit a wall, itself, or a decoy segment)?
-            hit_decoy = self.mode == "twisted" and head in self.decoy_segments
-            if self.snake.hit_wall() or self.snake.hit_self() or hit_decoy:
+            # Horde collision — also checked here in case snake walks into a stationary horde cell
+            if self.mode == "twisted" and self.horde_snakes:
+                self._check_horde_collision()
+
+            # Did the snake die (hit a wall, itself, a decoy, obstacle chunk, or anaconda)?
+            hit_decoy    = self.mode == "twisted" and head in self.decoy_segments
+            obstacle_cells = {c for chunk in self.obstacle_chunks for c in chunk}
+            hit_obstacle = self.mode == "twisted" and head in obstacle_cells
+            hit_anaconda = self.mode == "twisted" and head in self.anaconda_cells
+            if self.snake.hit_wall() or self.snake.hit_self() or hit_decoy or hit_obstacle or hit_anaconda:
                 self.state = STATE_GAME_OVER
+                self._save_high_score()
 
     def draw(self):
         # Clear the screen each frame
@@ -349,6 +639,29 @@ class Game:
                     x, y = pos
                     rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
                     pygame.draw.rect(self.screen, ORANGE, rect)
+
+                # Draw horde baby snakes
+                for s in self.horde_snakes:
+                    for cell in s['cells']:
+                        x, y = cell
+                        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                        pygame.draw.rect(self.screen, BABY_SNAKE, rect)
+                        pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
+
+                # Draw anaconda — bright head, darker body
+                for i, pos in enumerate(self.anaconda_cells):
+                    x, y = pos
+                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                    color = ANACONDA_HEAD_C if i == 0 else ANACONDA_BODY
+                    pygame.draw.rect(self.screen, color, rect)
+                    pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
+
+                # Draw obstacle chunks as light-gray squares
+                for chunk in self.obstacle_chunks:
+                    for x, y in chunk:
+                        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                        pygame.draw.rect(self.screen, WHITE_GRAY, rect)
+                        pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
 
                 # Draw split decoy segments as faded snake-green squares
                 for pos in self.decoy_segments:
@@ -385,9 +698,21 @@ class Game:
 
             self.snake.draw(self.screen)
 
-            # HUD: score in the top-left corner
+            # Vulnerable segment glow during horde event — subtle pulsing gold border
+            if self.mode == "twisted" and self.active_event == "horde":
+                t = pygame.time.get_ticks() / 1000.0
+                border_w = max(1, int(2 + 1 * math.sin(t * 3)))
+                vuln_len = min(HORDE_VULNERABLE, len(self.snake.body))
+                for pos in self.snake.body[:vuln_len]:
+                    x, y = pos
+                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                    pygame.draw.rect(self.screen, VULNERABLE, rect, border_w)
+
+            # HUD: score top-left, best score below it
             score_text = self.font.render("Score: " + str(self.score), True, WHITE)
+            best_text  = self.font.render("Best:  " + str(self.high_score), True, GOLD)
             self.screen.blit(score_text, (10, 10))
+            self.screen.blit(best_text,  (10, 36))
 
             # HUD: show the active effect name and remaining time (Twisted only)
             if self.mode == "twisted" and self.active_effect:
@@ -421,11 +746,18 @@ class Game:
         self.screen.blit(hint, (SCREEN_WIDTH // 2 - hint.get_width() // 2, 460))
 
     def _draw_game_over(self):
-        # "Game Over" centered in the middle of the current arena
-        over_text  = self.font_mid.render("Game Over", True, WHITE)
-        retry_text = self.font.render("Press R to return to menu", True, (150, 150, 150))
-        self.screen.blit(over_text,  (self.screen_w // 2 - over_text.get_width()  // 2, self.screen_h // 2 - 30))
-        self.screen.blit(retry_text, (self.screen_w // 2 - retry_text.get_width() // 2, self.screen_h // 2 + 20))
+        cx = self.screen_w // 2
+        cy = self.screen_h // 2
+
+        over_text   = self.font_mid.render("Game Over", True, WHITE)
+        score_text  = self.font.render("Score: " + str(self.score), True, WHITE)
+        best_text   = self.font.render("Best:  " + str(self.high_score), True, GOLD)
+        retry_text  = self.font.render("Press R to return to menu", True, (150, 150, 150))
+
+        self.screen.blit(over_text,  (cx - over_text.get_width()  // 2, cy - 60))
+        self.screen.blit(score_text, (cx - score_text.get_width() // 2, cy - 10))
+        self.screen.blit(best_text,  (cx - best_text.get_width()  // 2, cy + 18))
+        self.screen.blit(retry_text, (cx - retry_text.get_width() // 2, cy + 55))
 
     def run(self):
         # The main game loop — keeps running until the window is closed
