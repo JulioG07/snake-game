@@ -16,14 +16,14 @@ GRID_WIDTH    = SCREEN_WIDTH  // CELL_SIZE   # 20 cells across
 GRID_HEIGHT   = SCREEN_HEIGHT // CELL_SIZE   # 20 cells tall
 
 # --- Twisted mode arena (larger than Classic) ---
-# 720 / 30 = 24 cells across and tall — 4 extra cells per side
-TWISTED_SCREEN_WIDTH  = 720
-TWISTED_SCREEN_HEIGHT = 720
-TWISTED_GRID_WIDTH    = TWISTED_SCREEN_WIDTH  // CELL_SIZE   # 24 cells across
-TWISTED_GRID_HEIGHT   = TWISTED_SCREEN_HEIGHT // CELL_SIZE   # 24 cells tall
+# 780 / 30 = 26 cells across and tall — 6 extra cells per side vs Classic
+TWISTED_SCREEN_WIDTH  = 780
+TWISTED_SCREEN_HEIGHT = 780
+TWISTED_GRID_WIDTH    = TWISTED_SCREEN_WIDTH  // CELL_SIZE   # 26 cells across
+TWISTED_GRID_HEIGHT   = TWISTED_SCREEN_HEIGHT // CELL_SIZE   # 26 cells tall
 
 # --- Snake ---
-SNAKE_SPEED        = 8      # cells per second (base speed)
+SNAKE_SPEED        = 8     # cells per second (base speed)
 SPEED_BOOST_MULT   = 1.5    # speed multiplier when boost power-up is active
 SLOW_DOWN_MULT     = 0.5    # speed multiplier when slow-down power-up is active
 INITIAL_LENGTH     = 3      # how many segments the snake starts with
@@ -31,16 +31,29 @@ SHRINK_AMOUNT      = 3      # how many segments the shrink power-up removes
 
 # --- Power-ups ---
 POWERUP_DURATION        = 5.0   # seconds a timed power-up lasts (default)
-SPEED_BOOST_DURATION    = 7.0   # seconds speed boost lasts
-MAGNET_DURATION         = 7.0   # seconds magnet lasts
+SPEED_BOOST_DURATION    = 10.0   # seconds speed boost lasts
+MAGNET_DURATION         = 10.0   # seconds magnet lasts
 POWERUP_SPAWN_RATE      = 10.0  # seconds between power-up spawns
 DECOY_DURATION          = 15.0  # seconds before split decoy segments disappear
 PORTAL_DURATION         = 15.0  # seconds portals stay active
 MAGNET_RANGE            = 3     # Manhattan distance at which food gets pulled toward the head
 
-# --- Obstacles ---
-OBSTACLE_SPAWN_RATE = 30.0  # seconds between obstacle spawns
-MAX_OBSTACLES       = 10    # maximum number of obstacles on screen at once
+# --- Random events ---
+EVENT_COOLDOWN          = 15.0  # seconds between events (starts after previous event fully ends)
+OBSTACLE_CHUNK_INTERVAL = 1.3   # seconds between each chunk spawning / despawning
+OBSTACLE_MAX_CHUNKS     = 6     # total chunks per obstacle wave
+OBSTACLE_ACTIVE_TIME    = 4.0   # seconds all chunks stay fully on the grid
+OBSTACLE_MIN_CELLS      = 2     # minimum cells per chunk
+OBSTACLE_MAX_CELLS      = 4     # maximum cells per chunk
+ANACONDA_LENGTH         = 30    # number of cells in the anaconda body
+ANACONDA_SPEED          = 0.2   # seconds per step (5 cells/second)
+HORDE_MIN_COUNT         = 5     # minimum baby snakes per horde
+HORDE_MAX_COUNT         = 6     # maximum baby snakes per horde
+HORDE_SNAKE_MIN_LEN     = 2     # minimum cells per baby snake
+HORDE_SNAKE_MAX_LEN     = 3     # maximum cells per baby snake
+HORDE_SPEED             = 0.15  # seconds per step (~6.7 cells/second)
+HORDE_WARNING_TIME      = 1.5   # seconds of warning before snakes enter
+HORDE_VULNERABLE        = 7     # segments from head that are vulnerable to horde
 
 # --- Food ---
 REGULAR_FOOD_POINTS = 1
@@ -64,10 +77,14 @@ CYAN        = (0,   220, 220)   # slow down power-up
 PURPLE      = (180, 0,   255)   # double points power-up
 ORANGE      = (255, 140, 0)     # shrink power-up
 
-WHITE_GRAY  = (180, 180, 180)   # obstacles
-MYSTERY     = (220, 0,   220)   # mystery box
-DECOY       = (120, 180, 120)   # split decoy segments (faded snake green)
-PORTAL_COLOR = (150, 50, 255)   # portal rings
+WHITE_GRAY      = (180, 180, 180)   # obstacles
+MYSTERY         = (220, 0,   220)   # mystery box
+DECOY           = (120, 180, 120)   # split decoy segments (faded snake green)
+PORTAL_COLOR    = (150, 50,  255)   # portal rings
+ANACONDA_BODY   = (140, 70,  0)     # anaconda body segments
+ANACONDA_HEAD_C = (220, 110, 0)     # anaconda head (brighter)
+BABY_SNAKE      = (200, 0,   0)     # horde baby snake color
+VULNERABLE      = (255, 215, 0)     # gold highlight for vulnerable snake segments
 
 # --- Game States ---
 # The game is always in exactly one of these states.
