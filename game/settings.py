@@ -78,6 +78,12 @@ PURPLE      = (180, 0,   255)   # double points power-up
 ORANGE      = (255, 140, 0)     # shrink power-up
 
 WHITE_GRAY      = (180, 180, 180)   # obstacles
+
+# --- Grid tile colors ---
+CLASSIC_CELL_A  = (42,  52,  42)    # classic mode checkerboard — lighter green-gray
+CLASSIC_CELL_B  = (36,  45,  36)    # classic mode checkerboard — darker green-gray
+TWISTED_CELL_A  = (38,  32,  55)    # twisted mode checkerboard — lighter dark-purple
+TWISTED_CELL_B  = (30,  25,  45)    # twisted mode checkerboard — darker dark-purple
 MYSTERY         = (220, 0,   220)   # mystery box
 DECOY           = (120, 180, 120)   # split decoy segments (faded snake green)
 PORTAL_COLOR    = (150, 50,  255)   # portal rings

@@ -35,8 +35,30 @@ class Food:
 
     def draw(self, screen):
         x, y = self.position
-        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-        pygame.draw.rect(screen, RED, rect)
+        cx = x * CELL_SIZE + CELL_SIZE // 2
+        cy = y * CELL_SIZE + CELL_SIZE // 2
+
+        # Two cherries side by side
+        r = 8
+        lc = (cx - 6, cy + 6)   # left cherry center
+        rc = (cx + 6, cy + 6)   # right cherry center
+
+        # Stems drawn first so cherry circles cover the base of each stem
+        # Each stem curves up and inward in two segments, meeting at a junction,
+        # then a short main branch goes straight up from there
+        junction = (cx, cy - 10)
+        pygame.draw.line(screen, (30, 130, 30), (cx - 6, cy - 2), (cx - 4, cy - 7), 2)
+        pygame.draw.line(screen, (30, 130, 30), (cx - 4, cy - 7), junction, 2)
+        pygame.draw.line(screen, (30, 130, 30), (cx + 6, cy - 2), (cx + 4, cy - 7), 2)
+        pygame.draw.line(screen, (30, 130, 30), (cx + 4, cy - 7), junction, 2)
+        pygame.draw.line(screen, (30, 130, 30), junction, (cx, cy - 13), 2)
+
+        pygame.draw.circle(screen, (200, 30, 30), lc, r)
+        pygame.draw.circle(screen, (200, 30, 30), rc, r)
+        pygame.draw.circle(screen, (140, 10, 10), lc, r, 1)
+        pygame.draw.circle(screen, (140, 10, 10), rc, r, 1)
+        pygame.draw.circle(screen, (255, 100, 100), (lc[0] - 2, lc[1] - 2), 2)
+        pygame.draw.circle(screen, (255, 100, 100), (rc[0] - 2, rc[1] - 2), 2)
 
 
 class GoldenFruit:
@@ -63,11 +85,21 @@ class GoldenFruit:
         self.active = False
 
     def draw(self, screen):
-        # Only draw if currently on the grid
         if not self.active:
             return
         x, y = self.position
-        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-        # Gold fill with a bright yellow border to stand out from regular red food
-        pygame.draw.rect(screen, GOLD, rect)
-        pygame.draw.rect(screen, (255, 255, 0), rect, 2)
+        cx = x * CELL_SIZE + CELL_SIZE // 2
+        cy = y * CELL_SIZE + CELL_SIZE // 2 + 2   # shift down slightly for stem room
+
+        # Apple body
+        pygame.draw.circle(screen, (255, 200, 0), (cx, cy), 11)
+        pygame.draw.circle(screen, (200, 150, 0), (cx, cy), 11, 1)
+        # Highlight
+        pygame.draw.circle(screen, (255, 240, 120), (cx - 3, cy - 3), 3)
+        # Stem
+        stem_base = (cx + 1, cy - 11)
+        stem_top  = (cx + 1, cy - 15)
+        pygame.draw.line(screen, (100, 60, 10), stem_base, stem_top, 2)
+        # Leaf
+        leaf_points = [(cx + 1, cy - 13), (cx + 7, cy - 16), (cx + 4, cy - 11)]
+        pygame.draw.polygon(screen, (30, 160, 30), leaf_points)

@@ -12,7 +12,8 @@ from game.settings import (
     TWISTED_SCREEN_WIDTH, TWISTED_SCREEN_HEIGHT,
     TWISTED_GRID_WIDTH, TWISTED_GRID_HEIGHT,
     CELL_SIZE, GRID_WIDTH, GRID_HEIGHT,
-    GRAY, WHITE, GREEN, GOLD, BLUE, ORANGE, DECOY, PORTAL_COLOR, WHITE_GRAY,
+    GRAY, WHITE, GREEN, DARK_GREEN, GOLD, BLUE, ORANGE, DECOY, PORTAL_COLOR, WHITE_GRAY,
+    CLASSIC_CELL_A, CLASSIC_CELL_B, TWISTED_CELL_A, TWISTED_CELL_B,
     SNAKE_SPEED, SPEED_BOOST_MULT, POWERUP_DURATION, SPEED_BOOST_DURATION, MAGNET_DURATION, DECOY_DURATION, PORTAL_DURATION, MAGNET_RANGE,
     EVENT_COOLDOWN, OBSTACLE_CHUNK_INTERVAL, OBSTACLE_MAX_CHUNKS, OBSTACLE_ACTIVE_TIME, OBSTACLE_MIN_CELLS, OBSTACLE_MAX_CELLS,
     ANACONDA_LENGTH, ANACONDA_SPEED, ANACONDA_BODY, ANACONDA_HEAD_C,
@@ -62,6 +63,15 @@ class Game:
         self.effect_timer   = 0.0    # counts down to 0, then the effect ends
 
         self.high_score = self._load_high_score()
+
+        self.death_flash_timer = 0.0
+
+        # Background snake for the menu screen
+        self.menu_snake_cells = []
+        self.menu_snake_dir   = (1, 0)
+        self.menu_snake_timer = 0.0
+        self.menu_snake_speed = 0.10  # seconds per step
+        self._init_menu_snake()
 
     def start_game(self, mode):
         # Called when the player picks a mode from the menu.
@@ -132,6 +142,7 @@ class Game:
         self.horde_dir           = (0, 0)
         self.horde_timer         = 0.0
         self.horde_warning_timer = 0.0   # counts down warning phase
+        self.death_flash_timer   = 0.0
 
     def _load_high_score(self):
         try:
@@ -264,7 +275,8 @@ class Game:
         for i, pos in enumerate(self.snake.body):
             if pos in all_horde_cells:
                 if i < vuln_len or len(self.snake.body) <= HORDE_VULNERABLE:
-                    self.state = STATE_GAME_OVER
+                    self.state             = STATE_GAME_OVER
+                    self.death_flash_timer = 0.4
                 else:
                     severed = list(self.snake.body[i:])
                     self.snake.body = self.snake.body[:i]
@@ -512,8 +524,54 @@ class Game:
 
         return True
 
+    def _init_menu_snake(self):
+        # Rows/cols that are clear of the title, buttons, and hint text
+        safe_h_rows = [0, 1, 2, 3, 7, 13, 14, 16, 17, 18, 19]   # horizontal
+        safe_v_cols = [0, 1, 2, 3, 16, 17, 18, 19]               # vertical (avoids centered UI)
+        length = random.randint(5, 8)
+        if random.choice([True, False]):   # horizontal
+            row = random.choice(safe_h_rows)
+            if random.choice([True, False]):
+                self.menu_snake_dir   = (1, 0)
+                self.menu_snake_cells = [(-1 - i, row) for i in range(length)]
+            else:
+                self.menu_snake_dir   = (-1, 0)
+                self.menu_snake_cells = [(GRID_WIDTH + i, row) for i in range(length)]
+        else:                              # vertical
+            col = random.choice(safe_v_cols)
+            if random.choice([True, False]):
+                self.menu_snake_dir   = (0, 1)
+                self.menu_snake_cells = [(col, -1 - i) for i in range(length)]
+            else:
+                self.menu_snake_dir   = (0, -1)
+                self.menu_snake_cells = [(col, GRID_HEIGHT + i) for i in range(length)]
+
+    def _update_menu_snake(self, dt):
+        self.menu_snake_timer += dt
+        if self.menu_snake_timer >= self.menu_snake_speed:
+            self.menu_snake_timer = 0.0
+            dx, dy = self.menu_snake_dir
+            hx, hy = self.menu_snake_cells[0]
+            self.menu_snake_cells.insert(0, (hx + dx, hy + dy))
+            self.menu_snake_cells.pop()
+            tx, ty = self.menu_snake_cells[-1]
+            tail_gone = (
+                (dx ==  1 and tx >= GRID_WIDTH)  or
+                (dx == -1 and tx < 0)            or
+                (dy ==  1 and ty >= GRID_HEIGHT) or
+                (dy == -1 and ty < 0)
+            )
+            if tail_gone:
+                self._init_menu_snake()
+
     def update(self, dt):
-        # Only run game logic when actively playing
+        if self.state == STATE_MENU:
+            self._update_menu_snake(dt)
+            return
+        if self.state == STATE_GAME_OVER:
+            if self.death_flash_timer > 0:
+                self.death_flash_timer = max(0.0, self.death_flash_timer - dt)
+            return
         if self.state != STATE_PLAYING:
             return
 
@@ -624,16 +682,16 @@ class Game:
             hit_obstacle = self.mode == "twisted" and head in obstacle_cells
             hit_anaconda = self.mode == "twisted" and head in self.anaconda_cells
             if self.snake.hit_wall() or self.snake.hit_self() or hit_decoy or hit_obstacle or hit_anaconda:
-                self.state = STATE_GAME_OVER
+                self.state             = STATE_GAME_OVER
+                self.death_flash_timer = 0.4
                 self._save_high_score()
 
     def draw(self):
-        # Clear the screen each frame
-        self.screen.fill(GRAY)
-
         if self.state == STATE_MENU:
+            self.screen.fill(GRAY)
             self._draw_menu()
         else:
+            self._draw_grid()
             # Draw food, mystery box (if active), and the snake
             self.food.draw(self.screen)
 
@@ -641,11 +699,22 @@ class Game:
                 self.mystery_box.draw(self.screen)
                 self.golden_fruit.draw(self.screen)   # only draws if active
 
-                # Draw each bonus food as an orange square
+                # Draw each bonus food as an orange fruit
                 for pos in self.bonus_foods:
                     x, y = pos
-                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                    pygame.draw.rect(self.screen, ORANGE, rect)
+                    cx = x * CELL_SIZE + CELL_SIZE // 2
+                    cy = y * CELL_SIZE + CELL_SIZE // 2
+                    # Orange body
+                    pygame.draw.circle(self.screen, (255, 140, 0), (cx, cy), 11)
+                    pygame.draw.circle(self.screen, (210, 100, 0), (cx, cy), 11, 1)
+                    # Highlight
+                    pygame.draw.circle(self.screen, (255, 200, 80), (cx - 3, cy - 3), 3)
+                    # Stem
+                    pygame.draw.line(self.screen, (80, 50, 10),
+                                     (cx, cy - 11), (cx, cy - 14), 2)
+                    # Small leaf
+                    pygame.draw.polygon(self.screen, (30, 150, 30),
+                                        [(cx, cy - 13), (cx + 6, cy - 15), (cx + 3, cy - 11)])
 
                 # Draw horde baby snakes
                 for s in self.horde_snakes:
@@ -671,19 +740,25 @@ class Game:
                                     ANACONDA_BODY, ANACONDA_HEAD_C,
                                     show_head=anaconda_head_visible)
 
-                # Draw obstacle chunks as light-gray squares
+                # Draw obstacle chunks as void tiles
+                t_void = pygame.time.get_ticks() / 1000.0
+                glow_alpha = int(60 + 40 * math.sin(t_void * 2))
+                glow_surf = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
+                glow_surf.fill((0, 0, 0, 0))
+                pygame.draw.rect(glow_surf, (120, 40, 200, glow_alpha),
+                                 (0, 0, CELL_SIZE, CELL_SIZE), 3)
                 for chunk in self.obstacle_chunks:
                     for x, y in chunk:
-                        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                        pygame.draw.rect(self.screen, WHITE_GRAY, rect)
-                        pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
+                        rx = x * CELL_SIZE
+                        ry = y * CELL_SIZE
+                        pygame.draw.rect(self.screen, (10, 5, 18),
+                                         (rx, ry, CELL_SIZE, CELL_SIZE))
+                        self.screen.blit(glow_surf, (rx, ry))
 
-                # Draw split decoy segments as faded snake-green squares
-                for pos in self.decoy_segments:
-                    x, y = pos
-                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                    pygame.draw.rect(self.screen, DECOY, rect)
-                    pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
+                # Draw split decoy segments as snake-shaped circles (no head/eyes)
+                if self.decoy_segments:
+                    draw_snake_body(self.screen, self.decoy_segments, (1, 0),
+                                    DECOY, DECOY, show_head=False)
 
                 # Draw portals as pulsing ring + inner circle
                 if self.portals:
@@ -746,34 +821,135 @@ class Game:
         # Push everything we drew to the actual display
         pygame.display.flip()
 
+    def _draw_grid(self):
+        gw = self.snake.grid_width
+        gh = self.snake.grid_height
+        if self.mode == "twisted":
+            ca, cb = TWISTED_CELL_A, TWISTED_CELL_B
+        else:
+            ca, cb = CLASSIC_CELL_A, CLASSIC_CELL_B
+
+        for row in range(gh):
+            for col in range(gw):
+                color = ca if (col + row) % 2 == 0 else cb
+                pygame.draw.rect(self.screen, color,
+                                 (col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE))
+
+        # Vignette: semi-transparent dark overlay around the arena edges (twisted only)
+        if self.mode == "twisted":
+            vignette_surf = pygame.Surface((gw * CELL_SIZE, gh * CELL_SIZE), pygame.SRCALPHA)
+            depth = 80   # max alpha at the very edge
+            steps = 5    # how many cells inward the fade reaches
+            for i in range(steps):
+                alpha = int(depth * (1 - i / steps))
+                thick = CELL_SIZE
+                # top / bottom / left / right bands
+                pygame.draw.rect(vignette_surf, (0, 0, 0, alpha),
+                                 (i * thick, i * thick,
+                                  (gw - 2 * i) * thick, thick))
+                pygame.draw.rect(vignette_surf, (0, 0, 0, alpha),
+                                 (i * thick, (gh - i - 1) * thick,
+                                  (gw - 2 * i) * thick, thick))
+                pygame.draw.rect(vignette_surf, (0, 0, 0, alpha),
+                                 (i * thick, i * thick,
+                                  thick, (gh - 2 * i) * thick))
+                pygame.draw.rect(vignette_surf, (0, 0, 0, alpha),
+                                 ((gw - i - 1) * thick, i * thick,
+                                  thick, (gh - 2 * i) * thick))
+            self.screen.blit(vignette_surf, (0, 0))
+
     def _draw_menu(self):
-        # Menu always uses the Classic window size (600x600) since no mode is active yet
-        title = self.font_large.render("Snake, but better.", True, WHITE)
-        self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 140))
+        # Dark background with faint grid lines
+        self.screen.fill((20, 20, 20))
+        for col in range(GRID_WIDTH + 1):
+            pygame.draw.line(self.screen, (32, 32, 32),
+                             (col * CELL_SIZE, 0), (col * CELL_SIZE, SCREEN_HEIGHT))
+        for row in range(GRID_HEIGHT + 1):
+            pygame.draw.line(self.screen, (32, 32, 32),
+                             (0, row * CELL_SIZE), (SCREEN_WIDTH, row * CELL_SIZE))
 
-        # Two mode options — Classic in green, Twisted in gold
-        classic_text = self.font_mid.render("1  --  Classic", True, GREEN)
-        twisted_text = self.font_mid.render("2  --  Twisted", True, GOLD)
-        self.screen.blit(classic_text, (SCREEN_WIDTH // 2 - classic_text.get_width() // 2, 300))
-        self.screen.blit(twisted_text, (SCREEN_WIDTH // 2 - twisted_text.get_width() // 2, 360))
+        # Background snake
+        visible = [(x, y) for x, y in self.menu_snake_cells
+                   if 0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT]
+        if visible:
+            hx, hy = self.menu_snake_cells[0]
+            head_vis = (0 <= hx < GRID_WIDTH and 0 <= hy < GRID_HEIGHT)
+            draw_snake_body(self.screen, visible, self.menu_snake_dir,
+                            GREEN, DARK_GREEN, show_head=head_vis)
 
-        # Small hint at the bottom so the player knows what to press
-        hint = self.font.render("Press 1 or 2 to choose a mode", True, (150, 150, 150))
+        # Title with drop shadow
+        shadow_surf = self.font_large.render("Snake, but better.", True, (0, 70, 0))
+        title_surf  = self.font_large.render("Snake, but better.", True, WHITE)
+        tx = SCREEN_WIDTH // 2 - title_surf.get_width() // 2
+        self.screen.blit(shadow_surf, (tx + 3, 143))
+        self.screen.blit(title_surf,  (tx, 140))
+
+        # Styled mode buttons
+        btn_w, btn_h = 270, 52
+        btn_x = SCREEN_WIDTH // 2 - btn_w // 2
+
+        # Classic — dark green box with raised border
+        cy = 255
+        pygame.draw.rect(self.screen, (12, 45, 12), (btn_x, cy, btn_w, btn_h))
+        pygame.draw.line(self.screen, (0, 180, 0), (btn_x, cy), (btn_x + btn_w, cy), 2)
+        pygame.draw.line(self.screen, (0, 180, 0), (btn_x, cy), (btn_x, cy + btn_h), 2)
+        pygame.draw.line(self.screen, (0, 60, 0), (btn_x + btn_w, cy), (btn_x + btn_w, cy + btn_h), 2)
+        pygame.draw.line(self.screen, (0, 60, 0), (btn_x, cy + btn_h), (btn_x + btn_w, cy + btn_h), 2)
+        classic_lbl = self.font_mid.render("1   Classic", True, GREEN)
+        self.screen.blit(classic_lbl, (btn_x + btn_w // 2 - classic_lbl.get_width() // 2,
+                                       cy + btn_h // 2 - classic_lbl.get_height() // 2))
+
+        # Twisted — dark purple box with raised border
+        cy = 325
+        pygame.draw.rect(self.screen, (35, 10, 55), (btn_x, cy, btn_w, btn_h))
+        pygame.draw.line(self.screen, (150, 50, 255), (btn_x, cy), (btn_x + btn_w, cy), 2)
+        pygame.draw.line(self.screen, (150, 50, 255), (btn_x, cy), (btn_x, cy + btn_h), 2)
+        pygame.draw.line(self.screen, (50, 0, 100), (btn_x + btn_w, cy), (btn_x + btn_w, cy + btn_h), 2)
+        pygame.draw.line(self.screen, (50, 0, 100), (btn_x, cy + btn_h), (btn_x + btn_w, cy + btn_h), 2)
+        twisted_lbl = self.font_mid.render("2   Twisted", True, (180, 80, 255))
+        self.screen.blit(twisted_lbl, (btn_x + btn_w // 2 - twisted_lbl.get_width() // 2,
+                                       cy + btn_h // 2 - twisted_lbl.get_height() // 2))
+
+        # Hint
+        hint = self.font.render("Press 1 or 2 to choose a mode", True, (90, 90, 90))
         self.screen.blit(hint, (SCREEN_WIDTH // 2 - hint.get_width() // 2, 460))
 
     def _draw_game_over(self):
         cx = self.screen_w // 2
         cy = self.screen_h // 2
 
-        over_text   = self.font_mid.render("Game Over", True, WHITE)
-        score_text  = self.font.render("Score: " + str(self.score), True, WHITE)
-        best_text   = self.font.render("Best:  " + str(self.high_score), True, GOLD)
-        retry_text  = self.font.render("Press R to return to menu", True, (150, 150, 150))
+        # Dark translucent overlay over the frozen game frame
+        overlay = pygame.Surface((self.screen_w, self.screen_h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 175))
+        self.screen.blit(overlay, (0, 0))
 
-        self.screen.blit(over_text,  (cx - over_text.get_width()  // 2, cy - 60))
-        self.screen.blit(score_text, (cx - score_text.get_width() // 2, cy - 10))
-        self.screen.blit(best_text,  (cx - best_text.get_width()  // 2, cy + 18))
-        self.screen.blit(retry_text, (cx - retry_text.get_width() // 2, cy + 55))
+        # Stats panel
+        pw, ph = 300, 190
+        px, py = cx - pw // 2, cy - ph // 2
+        pygame.draw.rect(self.screen, (18, 18, 18), (px, py, pw, ph))
+        pygame.draw.rect(self.screen, (200, 50, 50), (px, py, pw, ph), 2)
+
+        over_text  = self.font_mid.render("GAME  OVER", True, (220, 60, 60))
+        self.screen.blit(over_text, (cx - over_text.get_width() // 2, py + 18))
+
+        # Divider
+        pygame.draw.line(self.screen, (60, 20, 20),
+                         (px + 16, py + 62), (px + pw - 16, py + 62), 1)
+
+        score_text = self.font.render("Score    " + str(self.score), True, WHITE)
+        best_text  = self.font.render("Best     " + str(self.high_score), True, GOLD)
+        self.screen.blit(score_text, (cx - score_text.get_width() // 2, py + 76))
+        self.screen.blit(best_text,  (cx - best_text.get_width()  // 2, py + 106))
+
+        retry_text = self.font.render("Press R to return to menu", True, (90, 90, 90))
+        self.screen.blit(retry_text, (cx - retry_text.get_width() // 2, py + ph - 34))
+
+        # Red flash — drawn last so it sits on top while fading out
+        if self.death_flash_timer > 0:
+            alpha = int(210 * (self.death_flash_timer / 0.4))
+            flash = pygame.Surface((self.screen_w, self.screen_h), pygame.SRCALPHA)
+            flash.fill((200, 0, 0, alpha))
+            self.screen.blit(flash, (0, 0))
 
     def run(self):
         # The main game loop — keeps running until the window is closed
