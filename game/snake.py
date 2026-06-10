@@ -94,16 +94,55 @@ class Snake:
         return False
 
     def draw(self, screen):
-        # Draw each segment as a square
-        for i in range(len(self.body)):
-            x, y = self.body[i]
+        draw_snake_body(screen, self.body, self.direction, GREEN, DARK_GREEN)
 
-            # Head is darker so you can tell them apart
-            if i == 0:
-                color = DARK_GREEN
-            else:
-                color = GREEN
 
-            rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-            pygame.draw.rect(screen, color, rect)
-            pygame.draw.rect(screen, (0, 0, 0), rect, 1)
+def draw_snake_body(screen, cells, direction, body_color, head_color,
+                    eye_white_r=4, eye_pupil_r=2, show_head=True):
+    if not cells:
+        return
+
+    r = CELL_SIZE // 2 - 1
+
+    # Pass 1 — connectors between adjacent segment centers
+    for i in range(len(cells) - 1):
+        x1, y1 = cells[i]
+        x2, y2 = cells[i + 1]
+        if abs(x2 - x1) + abs(y2 - y1) != 1:
+            continue
+        cx1 = x1 * CELL_SIZE + CELL_SIZE // 2
+        cy1 = y1 * CELL_SIZE + CELL_SIZE // 2
+        cx2 = x2 * CELL_SIZE + CELL_SIZE // 2
+        cy2 = y2 * CELL_SIZE + CELL_SIZE // 2
+        color = head_color if (i == 0 and show_head) else body_color
+        if x1 == x2:
+            pygame.draw.rect(screen, color, (cx1 - r, min(cy1, cy2), 2 * r, abs(cy2 - cy1)))
+        else:
+            pygame.draw.rect(screen, color, (min(cx1, cx2), cy1 - r, abs(cx2 - cx1), 2 * r))
+
+    # Pass 2 — circles at each segment center (tail → head so head is on top)
+    for i in range(len(cells) - 1, -1, -1):
+        x, y = cells[i]
+        cx = x * CELL_SIZE + CELL_SIZE // 2
+        cy = y * CELL_SIZE + CELL_SIZE // 2
+        pygame.draw.circle(screen, head_color if (i == 0 and show_head) else body_color, (cx, cy), r)
+
+    # Pass 3 — eyes on the head (skipped when show_head is False)
+    if not show_head:
+        return
+
+    hx, hy = cells[0]
+    hcx = hx * CELL_SIZE + CELL_SIZE // 2
+    hcy = hy * CELL_SIZE + CELL_SIZE // 2
+    dx, dy = direction
+    fwd  = CELL_SIZE // 4
+    perp = CELL_SIZE // 4
+
+    if   dx ==  1: eyes = [(hcx + fwd, hcy - perp), (hcx + fwd, hcy + perp)]
+    elif dx == -1: eyes = [(hcx - fwd, hcy - perp), (hcx - fwd, hcy + perp)]
+    elif dy == -1: eyes = [(hcx - perp, hcy - fwd), (hcx + perp, hcy - fwd)]
+    else:          eyes = [(hcx - perp, hcy + fwd), (hcx + perp, hcy + fwd)]
+
+    for ex, ey in eyes:
+        pygame.draw.circle(screen, (255, 255, 255), (ex, ey), eye_white_r)
+        pygame.draw.circle(screen, (0,   0,   0),   (ex, ey), eye_pupil_r)

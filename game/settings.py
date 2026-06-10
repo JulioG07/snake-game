@@ -39,13 +39,13 @@ PORTAL_DURATION         = 15.0  # seconds portals stay active
 MAGNET_RANGE            = 3     # Manhattan distance at which food gets pulled toward the head
 
 # --- Random events ---
-EVENT_COOLDOWN          = 15.0  # seconds between events (starts after previous event fully ends)
+EVENT_COOLDOWN          = 12.0  # seconds between events (starts after previous event fully ends)
 OBSTACLE_CHUNK_INTERVAL = 1.3   # seconds between each chunk spawning / despawning
 OBSTACLE_MAX_CHUNKS     = 6     # total chunks per obstacle wave
 OBSTACLE_ACTIVE_TIME    = 4.0   # seconds all chunks stay fully on the grid
 OBSTACLE_MIN_CELLS      = 2     # minimum cells per chunk
 OBSTACLE_MAX_CELLS      = 4     # maximum cells per chunk
-ANACONDA_LENGTH         = 30    # number of cells in the anaconda body
+ANACONDA_LENGTH         = 50    # number of cells in the anaconda body
 ANACONDA_SPEED          = 0.2   # seconds per step (5 cells/second)
 HORDE_MIN_COUNT         = 5     # minimum baby snakes per horde
 HORDE_MAX_COUNT         = 6     # maximum baby snakes per horde
@@ -83,7 +83,8 @@ DECOY           = (120, 180, 120)   # split decoy segments (faded snake green)
 PORTAL_COLOR    = (150, 50,  255)   # portal rings
 ANACONDA_BODY   = (140, 70,  0)     # anaconda body segments
 ANACONDA_HEAD_C = (220, 110, 0)     # anaconda head (brighter)
-BABY_SNAKE      = (200, 0,   0)     # horde baby snake color
+BABY_SNAKE      = (200, 0,   0)     # horde baby snake body
+BABY_SNAKE_HEAD = (240, 30,  30)    # horde baby snake head (brighter red)
 VULNERABLE      = (255, 215, 0)     # gold highlight for vulnerable snake segments
 
 # --- Game States ---

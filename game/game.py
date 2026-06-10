@@ -17,11 +17,11 @@ from game.settings import (
     EVENT_COOLDOWN, OBSTACLE_CHUNK_INTERVAL, OBSTACLE_MAX_CHUNKS, OBSTACLE_ACTIVE_TIME, OBSTACLE_MIN_CELLS, OBSTACLE_MAX_CELLS,
     ANACONDA_LENGTH, ANACONDA_SPEED, ANACONDA_BODY, ANACONDA_HEAD_C,
     HORDE_MIN_COUNT, HORDE_MAX_COUNT, HORDE_SNAKE_MIN_LEN, HORDE_SNAKE_MAX_LEN,
-    HORDE_SPEED, HORDE_WARNING_TIME, HORDE_VULNERABLE, BABY_SNAKE, VULNERABLE,
+    HORDE_SPEED, HORDE_WARNING_TIME, HORDE_VULNERABLE, BABY_SNAKE, BABY_SNAKE_HEAD, VULNERABLE,
     STATE_MENU, STATE_PLAYING, STATE_GAME_OVER,
     HIGH_SCORE_FILE,
 )
-from game.snake import Snake, UP, DOWN, LEFT, RIGHT
+from game.snake import Snake, UP, DOWN, LEFT, RIGHT, draw_snake_body
 from game.food import Food, GoldenFruit
 from game.mystery_box import MysteryBox
 
@@ -314,23 +314,28 @@ class Game:
                 self.anaconda_head = (hx + dx, hy + dy)
                 hx, hy = self.anaconda_head
 
-                # Add new head cell only if it's on the grid
-                if 0 <= hx < self.snake.grid_width and 0 <= hy < self.snake.grid_height:
-                    self.anaconda_cells.insert(0, (hx, hy))
+                # Sliding window: visible cells are the on-grid portion of the
+                # ANACONDA_LENGTH body behind the ghost head. A 50-cell body on
+                # a 26-cell grid covers the full row while the tail is still
+                # off-screen on the entry side, so length > grid_width actually
+                # matters and the head can exit while many body cells remain.
+                self.anaconda_cells = []
+                for i in range(ANACONDA_LENGTH):
+                    bx = hx - dx * i
+                    by = hy - dy * i
+                    if 0 <= bx < self.snake.grid_width and 0 <= by < self.snake.grid_height:
+                        self.anaconda_cells.append((bx, by))
 
-                head_exited = (
-                    (dx ==  1 and hx >= self.snake.grid_width)  or
-                    (dx == -1 and hx < 0)                       or
-                    (dy ==  1 and hy >= self.snake.grid_height)  or
-                    (dy == -1 and hy < 0)
+                # Event ends when the tail cell has also exited the far side
+                tx = hx - dx * (ANACONDA_LENGTH - 1)
+                ty = hy - dy * (ANACONDA_LENGTH - 1)
+                tail_exited = (
+                    (dx ==  1 and tx >= self.snake.grid_width)  or
+                    (dx == -1 and tx < 0)                       or
+                    (dy ==  1 and ty >= self.snake.grid_height)  or
+                    (dy == -1 and ty < 0)
                 )
-
-                # Trim tail once full length is reached OR while exiting
-                if len(self.anaconda_cells) > ANACONDA_LENGTH or head_exited:
-                    if self.anaconda_cells:
-                        self.anaconda_cells.pop()
-
-                if head_exited and not self.anaconda_cells:
+                if tail_exited:
                     self.active_event   = None
                     self.anaconda_cells = []
                     self.event_cooldown = EVENT_COOLDOWN
@@ -394,8 +399,10 @@ class Game:
         return food_pos
 
     def _apply_effect(self, effect):
-        # Apply the given effect to the game and start its countdown timer.
-        # Each new effect overwrites the previous one (only one active at a time).
+        # Clean up any running timed effect first so its side effects are reverted
+        if self.active_effect:
+            self._end_effect()
+
         self.active_effect = effect
         self.effect_timer  = POWERUP_DURATION
 
@@ -642,19 +649,27 @@ class Game:
 
                 # Draw horde baby snakes
                 for s in self.horde_snakes:
-                    for cell in s['cells']:
-                        x, y = cell
-                        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                        pygame.draw.rect(self.screen, BABY_SNAKE, rect)
-                        pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
+                    if s['cells']:
+                        ghx, ghy = s['ghost_head']
+                        head_on_grid = (
+                            0 <= ghx < self.snake.grid_width and
+                            0 <= ghy < self.snake.grid_height
+                        )
+                        draw_snake_body(self.screen, s['cells'], self.horde_dir,
+                                        BABY_SNAKE, BABY_SNAKE_HEAD,
+                                        eye_white_r=3, eye_pupil_r=1,
+                                        show_head=head_on_grid)
 
-                # Draw anaconda — bright head, darker body
-                for i, pos in enumerate(self.anaconda_cells):
-                    x, y = pos
-                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                    color = ANACONDA_HEAD_C if i == 0 else ANACONDA_BODY
-                    pygame.draw.rect(self.screen, color, rect)
-                    pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)
+                # Draw anaconda — hide head decoration once ghost head exits grid
+                if self.anaconda_cells:
+                    ahx, ahy = self.anaconda_head
+                    anaconda_head_visible = (
+                        0 <= ahx < self.snake.grid_width and
+                        0 <= ahy < self.snake.grid_height
+                    )
+                    draw_snake_body(self.screen, self.anaconda_cells, self.anaconda_dir,
+                                    ANACONDA_BODY, ANACONDA_HEAD_C,
+                                    show_head=anaconda_head_visible)
 
                 # Draw obstacle chunks as light-gray squares
                 for chunk in self.obstacle_chunks:
@@ -681,32 +696,33 @@ class Game:
                         pygame.draw.circle(self.screen, PORTAL_COLOR, (cx, cy), outer_r, 3)
                         pygame.draw.circle(self.screen, PORTAL_COLOR, (cx, cy), inner_r)
 
-                # Magnet animation: pulsing ring around food within pull range
-                if self.active_effect == "magnet":
-                    t = pygame.time.get_ticks() / 1000.0
-                    radius = int(CELL_SIZE // 2 + 4 + 3 * math.sin(t * 6))
-                    head = self.snake.get_head()
-                    candidates = [self.food.position]
-                    if self.golden_fruit.active:
-                        candidates.append(self.golden_fruit.position)
-                    candidates.extend(self.bonus_foods)
-                    for pos in candidates:
-                        if abs(pos[0] - head[0]) + abs(pos[1] - head[1]) <= MAGNET_RANGE:
-                            cx = pos[0] * CELL_SIZE + CELL_SIZE // 2
-                            cy = pos[1] * CELL_SIZE + CELL_SIZE // 2
-                            pygame.draw.circle(self.screen, (0, 220, 220), (cx, cy), radius, 2)
-
             self.snake.draw(self.screen)
 
-            # Vulnerable segment glow during horde event — subtle pulsing gold border
+            # Magnet animation: pulsing ring around in-range food, drawn after snake so it's visible
+            if self.mode == "twisted" and self.active_effect == "magnet":
+                t = pygame.time.get_ticks() / 1000.0
+                radius = int(CELL_SIZE // 2 + 4 + 3 * math.sin(t * 6))
+                head = self.snake.get_head()
+                candidates = [self.food.position]
+                if self.golden_fruit.active:
+                    candidates.append(self.golden_fruit.position)
+                candidates.extend(self.bonus_foods)
+                for pos in candidates:
+                    if abs(pos[0] - head[0]) + abs(pos[1] - head[1]) <= MAGNET_RANGE:
+                        cx = pos[0] * CELL_SIZE + CELL_SIZE // 2
+                        cy = pos[1] * CELL_SIZE + CELL_SIZE // 2
+                        pygame.draw.circle(self.screen, (0, 220, 220), (cx, cy), radius, 2)
+
+            # Vulnerable segment glow during horde event — pulsing gold circle outline
             if self.mode == "twisted" and self.active_event == "horde":
                 t = pygame.time.get_ticks() / 1000.0
                 border_w = max(1, int(2 + 1 * math.sin(t * 3)))
+                seg_r    = CELL_SIZE // 2 - 1
                 vuln_len = min(HORDE_VULNERABLE, len(self.snake.body))
                 for pos in self.snake.body[:vuln_len]:
-                    x, y = pos
-                    rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                    pygame.draw.rect(self.screen, VULNERABLE, rect, border_w)
+                    cx = pos[0] * CELL_SIZE + CELL_SIZE // 2
+                    cy = pos[1] * CELL_SIZE + CELL_SIZE // 2
+                    pygame.draw.circle(self.screen, VULNERABLE, (cx, cy), seg_r, border_w)
 
             # HUD: score top-left, best score below it
             score_text = self.font.render("Score: " + str(self.score), True, WHITE)
