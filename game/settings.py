@@ -52,7 +52,7 @@ HORDE_MAX_COUNT         = 6     # maximum baby snakes per horde
 HORDE_SNAKE_MIN_LEN     = 2     # minimum cells per baby snake
 HORDE_SNAKE_MAX_LEN     = 3     # maximum cells per baby snake
 HORDE_SPEED             = 0.15  # seconds per step (~6.7 cells/second)
-HORDE_WARNING_TIME      = 1.5   # seconds of warning before snakes enter
+HORDE_WARNING_TIME      = 2.0   # seconds of warning before snakes enter
 HORDE_VULNERABLE        = 7     # segments from head that are vulnerable to horde
 
 # --- Food ---

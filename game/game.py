@@ -5,6 +5,7 @@
 
 import json
 import math
+import os
 import pygame
 import random
 from game.settings import (
@@ -19,7 +20,7 @@ from game.settings import (
     ANACONDA_LENGTH, ANACONDA_SPEED, ANACONDA_BODY, ANACONDA_HEAD_C,
     HORDE_MIN_COUNT, HORDE_MAX_COUNT, HORDE_SNAKE_MIN_LEN, HORDE_SNAKE_MAX_LEN,
     HORDE_SPEED, HORDE_WARNING_TIME, HORDE_VULNERABLE, BABY_SNAKE, BABY_SNAKE_HEAD, VULNERABLE,
-    STATE_MENU, STATE_PLAYING, STATE_GAME_OVER,
+    STATE_MENU, STATE_PLAYING, STATE_PAUSED, STATE_GAME_OVER,
     HIGH_SCORE_FILE,
 )
 from game.snake import Snake, UP, DOWN, LEFT, RIGHT, draw_snake_body
@@ -64,7 +65,32 @@ class Game:
 
         self.high_score = self._load_high_score()
 
-        self.death_flash_timer = 0.0
+        self.death_flash_timer  = 0.0
+        self.fade_alpha         = 0
+        self.fade_pending_mode  = None
+        self.fade_delay         = 0.0
+
+        # Sounds
+        _root = os.path.dirname(os.path.dirname(__file__))
+        def _snd(path):
+            try:
+                return pygame.mixer.Sound(os.path.join(_root, path))
+            except FileNotFoundError:
+                return None
+        self.snd_startgame = _snd("assets/sounds/ui/startgame.mp3")
+        self.snd_eating    = _snd("assets/sounds/gameplay/eating.wav")
+        self.snd_score     = _snd("assets/sounds/gameplay/score.wav")
+        self.snd_death     = _snd("assets/sounds/gameplay/death.mp3")
+        if self.snd_death: self.snd_death.set_volume(0.15)
+        self.snd_pause     = _snd("assets/sounds/ui/pause.mp3")
+        self.snd_spawn        = _snd("assets/sounds/events/spawn.wav")
+        self.snd_anaconda     = _snd("assets/sounds/events/anaconda.wav")
+        self.snd_horde        = _snd("assets/sounds/events/horde.wav")
+        self.snd_powerup      = _snd("assets/sounds/powerups/powerup_sound.mp3")
+        self.snd_open_portal  = _snd("assets/sounds/powerups/open_portal.mp3")
+        self.snd_close_portal = _snd("assets/sounds/powerups/close_portal.mp3")
+        self.snd_cut          = _snd("assets/sounds/powerups/cut.wav")
+        # self.snd_move         = _snd("assets/sounds/gameplay/move.mp3")
 
         # Background snake for the menu screen
         self.menu_snake_cells = []
@@ -95,8 +121,9 @@ class Game:
         self.snake = Snake(gw, gh)
         self.food  = Food(gw, gh)
         self.food.respawn(self.snake.body)
-        self.score = 0
-        self.state = STATE_PLAYING
+        self.score             = 0
+        self.state             = STATE_PLAYING
+        self.new_record_played = False
         self.move_timer = 0
         self.move_delay = 1.0 / SNAKE_SPEED
 
@@ -132,10 +159,11 @@ class Game:
         self.chunks_spawned    = 0
 
         # Anaconda event
-        self.anaconda_cells  = []
-        self.anaconda_head   = (0, 0)
-        self.anaconda_dir    = (0, 0)
-        self.anaconda_timer  = 0.0
+        self.anaconda_cells          = []
+        self.anaconda_head           = (0, 0)
+        self.anaconda_dir            = (0, 0)
+        self.anaconda_timer          = 0.0
+        self.anaconda_warning_timer  = 0.0
 
         # Horde event — list of dicts: {'cells', 'ghost_head', 'max_len'}
         self.horde_snakes        = []
@@ -220,6 +248,7 @@ class Game:
         elif choice == "horde":
             self.active_event        = "horde"
             self.horde_warning_timer = HORDE_WARNING_TIME
+            if self.snd_horde: self.snd_horde.play()
             self.horde_timer         = 0.0
             self.horde_snakes        = []
             horizontal = random.choice([True, False])
@@ -247,9 +276,11 @@ class Game:
                     self.horde_snakes.append({'cells': [], 'ghost_head': (col, gy), 'max_len': max_len})
 
         else:
-            self.active_event   = "anaconda"
-            self.anaconda_cells = []
-            self.anaconda_timer = ANACONDA_SPEED  # fire first step immediately
+            self.active_event          = "anaconda"
+            self.anaconda_cells        = []
+            self.anaconda_timer        = ANACONDA_SPEED
+            self.anaconda_warning_timer = 2.0
+            if self.snd_anaconda: self.snd_anaconda.play()
             if random.choice([True, False]):  # horizontal
                 row = random.randint(0, self.snake.grid_height - 1)
                 if random.choice([True, False]):  # left → right
@@ -267,6 +298,18 @@ class Game:
                     self.anaconda_dir  = (0, -1)
                     self.anaconda_head = (col, self.snake.grid_height)
 
+    def _check_anaconda_collision(self):
+        anaconda_set = set(self.anaconda_cells)
+        if not anaconda_set:
+            return
+        for pos in self.snake.body:
+            if pos in anaconda_set:
+                self.state             = STATE_GAME_OVER
+                self.death_flash_timer = 0.4
+                self.snd_death.play()
+                self._save_high_score()
+                return
+
     def _check_horde_collision(self):
         all_horde_cells = {c for s in self.horde_snakes for c in s['cells']}
         if not all_horde_cells:
@@ -277,11 +320,13 @@ class Game:
                 if i < vuln_len or len(self.snake.body) <= HORDE_VULNERABLE:
                     self.state             = STATE_GAME_OVER
                     self.death_flash_timer = 0.4
+                    self.snd_death.play()
                 else:
                     severed = list(self.snake.body[i:])
                     self.snake.body = self.snake.body[:i]
                     self.decoy_segments.extend(severed)
                     self.decoy_timer = DECOY_DURATION
+                    if self.snd_cut: self.snd_cut.play()
                 return
 
     def _update_active_event(self, dt):
@@ -294,6 +339,7 @@ class Game:
                     chunk = self._gen_obstacle_chunk(self._all_occupied())
                     if chunk:
                         self.obstacle_chunks.append(chunk)
+                        if self.snd_spawn: self.snd_spawn.play()
                     self.chunks_spawned += 1
                     if self.chunks_spawned >= OBSTACLE_MAX_CHUNKS:
                         self.event_phase       = "active"
@@ -318,6 +364,9 @@ class Game:
                         self.event_cooldown  = EVENT_COOLDOWN
 
         elif self.active_event == "anaconda":
+            if self.anaconda_warning_timer > 0:
+                self.anaconda_warning_timer -= dt
+                return
             self.anaconda_timer += dt
             if self.anaconda_timer >= ANACONDA_SPEED:
                 self.anaconda_timer = 0.0
@@ -337,6 +386,8 @@ class Game:
                     by = hy - dy * i
                     if 0 <= bx < self.snake.grid_width and 0 <= by < self.snake.grid_height:
                         self.anaconda_cells.append((bx, by))
+
+                self._check_anaconda_collision()
 
                 # Event ends when the tail cell has also exited the far side
                 tx = hx - dx * (ANACONDA_LENGTH - 1)
@@ -411,9 +462,13 @@ class Game:
         return food_pos
 
     def _apply_effect(self, effect):
-        # Clean up any running timed effect first so its side effects are reverted
         if self.active_effect:
             self._end_effect()
+
+        if effect == "portal":
+            if self.snd_open_portal: self.snd_open_portal.play()
+        elif effect != "split_decoy":
+            if self.snd_powerup: self.snd_powerup.play()
 
         self.active_effect = effect
         self.effect_timer  = POWERUP_DURATION
@@ -476,8 +531,17 @@ class Game:
             self.decoy_segments.extend(self.snake.body[-amount:])
             self.snake.shrink(amount)
             self.decoy_timer   = DECOY_DURATION
+            if self.snd_cut: self.snd_cut.play()
             self.active_effect = None
             self.effect_timer  = 0.0
+
+    def _check_score_sound(self, prev_score):
+        crossed_ten    = (self.score // 10) > (prev_score // 10)
+        new_record     = self.score > self.high_score and not self.new_record_played
+        if crossed_ten or new_record:
+            self.snd_score.play()
+        if new_record:
+            self.new_record_played = True
 
     def _end_effect(self):
         # Called when the effect timer runs out — revert everything back to normal.
@@ -497,21 +561,37 @@ class Game:
 
                 if self.state == STATE_MENU:
                     # 1 = Classic, 2 = Twisted
-                    if event.key == pygame.K_1:
-                        self.start_game("classic")
-                    elif event.key == pygame.K_2:
-                        self.start_game("twisted")
+                    if event.key == pygame.K_1 and not self.fade_pending_mode:
+                        self.snd_startgame.play()
+                        self.fade_pending_mode = "classic"
+                        self.fade_delay        = 0.3
+                    elif event.key == pygame.K_2 and not self.fade_pending_mode:
+                        self.snd_startgame.play()
+                        self.fade_pending_mode = "twisted"
+                        self.fade_delay        = 0.3
 
                 elif self.state == STATE_PLAYING:
+                    if event.key == pygame.K_SPACE:
+                        self.state = STATE_PAUSED
+                        if self.snd_pause: self.snd_pause.play()
+
                     # Arrow keys change the snake's queued direction
-                    if event.key == pygame.K_UP:
+                    elif event.key == pygame.K_UP:
                         self.snake.change_direction(UP)
+                        # if self.snd_move: self.snd_move.play()
                     elif event.key == pygame.K_DOWN:
                         self.snake.change_direction(DOWN)
+                        # if self.snd_move: self.snd_move.play()
                     elif event.key == pygame.K_LEFT:
                         self.snake.change_direction(LEFT)
+                        # if self.snd_move: self.snd_move.play()
                     elif event.key == pygame.K_RIGHT:
                         self.snake.change_direction(RIGHT)
+                        # if self.snd_move: self.snd_move.play()
+
+                elif self.state == STATE_PAUSED:
+                    if event.key == pygame.K_SPACE:
+                        self.state = STATE_PLAYING
 
                 elif self.state == STATE_GAME_OVER:
                     # R takes the player back to the menu so they can pick a mode again
@@ -567,6 +647,19 @@ class Game:
     def update(self, dt):
         if self.state == STATE_MENU:
             self._update_menu_snake(dt)
+            if self.fade_pending_mode:
+                if self.fade_delay > 0:
+                    self.fade_delay -= dt
+                else:
+                    self.fade_alpha = min(255, self.fade_alpha + int(510 * dt))
+                    if self.fade_alpha >= 255:
+                        mode = self.fade_pending_mode
+                        self.fade_pending_mode = None
+                        self.fade_alpha        = 0
+                        self.fade_delay        = 0.0
+                        self.start_game(mode)
+            return
+        if self.state == STATE_PAUSED:
             return
         if self.state == STATE_GAME_OVER:
             if self.death_flash_timer > 0:
@@ -588,6 +681,7 @@ class Game:
             if self.portal_timer <= 0:
                 self.portals      = []
                 self.portal_timer = 0.0
+                if self.snd_close_portal: self.snd_close_portal.play()
 
         # --- Decoy segment timer ---
         if self.decoy_segments:
@@ -650,27 +744,36 @@ class Game:
             # Did the snake's head land on the regular food?
             if head == self.food.position:
                 self.snake.grow()
+                prev = self.score
                 self.score += self.food.points
+                self.snd_eating.play()
+                self._check_score_sound(prev)
                 self.food.respawn(self.snake.body)
 
             # Did the snake's head land on the mystery box? (Twisted only)
             if self.mode == "twisted" and self.mystery_box.active:
                 if head == self.mystery_box.position:
-                    effect = self.mystery_box.roll_effect()  # two-stage randomizer
+                    effect = self.mystery_box.roll_effect()
                     self._apply_effect(effect)
-                    self.mystery_box.despawn()               # remove box from grid
-                    self.box_spawn_timer = 0                 # reset spawn cooldown
+                    self.mystery_box.despawn()
+                    self.box_spawn_timer = 0
 
             # Did the snake's head land on the golden fruit? (Twisted only)
             if self.mode == "twisted" and self.golden_fruit.active:
                 if head == self.golden_fruit.position:
-                    self.score += self.golden_fruit.points   # +5 points
-                    self.golden_fruit.despawn()              # remove from grid
+                    prev = self.score
+                    self.score += self.golden_fruit.points
+                    self.snd_eating.play()
+                    self._check_score_sound(prev)
+                    self.golden_fruit.despawn()
 
             # Did the snake's head land on a bonus food item? (Twisted only)
             if self.mode == "twisted" and head in self.bonus_foods:
-                self.bonus_foods.remove(head)   # remove just that one item
-                self.score += 1                 # worth 1 point like regular food
+                self.bonus_foods.remove(head)
+                prev = self.score
+                self.score += 1
+                self.snd_eating.play()
+                self._check_score_sound(prev)
 
             # Horde collision — also checked here in case snake walks into a stationary horde cell
             if self.mode == "twisted" and self.horde_snakes:
@@ -684,6 +787,7 @@ class Game:
             if self.snake.hit_wall() or self.snake.hit_self() or hit_decoy or hit_obstacle or hit_anaconda:
                 self.state             = STATE_GAME_OVER
                 self.death_flash_timer = 0.4
+                self.snd_death.play()
                 self._save_high_score()
 
     def draw(self):
@@ -814,9 +918,11 @@ class Game:
                 )
                 self.screen.blit(effect_text, (self.screen_w - effect_text.get_width() - 10, 10))
 
-            # Overlay the game-over message if the player has died
+            # Overlay the game-over or pause message if needed
             if self.state == STATE_GAME_OVER:
                 self._draw_game_over()
+            elif self.state == STATE_PAUSED:
+                self._draw_pause()
 
         # Push everything we drew to the actual display
         pygame.display.flip()
@@ -857,6 +963,24 @@ class Game:
                                  ((gw - i - 1) * thick, i * thick,
                                   thick, (gh - 2 * i) * thick))
             self.screen.blit(vignette_surf, (0, 0))
+
+    def _draw_pause(self):
+        cx = self.screen_w // 2
+        cy = self.screen_h // 2
+
+        overlay = pygame.Surface((self.screen_w, self.screen_h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        self.screen.blit(overlay, (0, 0))
+
+        pw, ph = 280, 140
+        px, py = cx - pw // 2, cy - ph // 2
+        pygame.draw.rect(self.screen, (18, 18, 18), (px, py, pw, ph))
+        pygame.draw.rect(self.screen, (100, 100, 100), (px, py, pw, ph), 2)
+
+        pause_text  = self.font_mid.render("PAUSED", True, WHITE)
+        resume_text = self.font.render("Press SPACE to resume", True, (90, 90, 90))
+        self.screen.blit(pause_text,  (cx - pause_text.get_width()  // 2, py + 30))
+        self.screen.blit(resume_text, (cx - resume_text.get_width() // 2, py + 90))
 
     def _draw_menu(self):
         # Dark background with faint grid lines
@@ -913,6 +1037,30 @@ class Game:
         # Hint
         hint = self.font.render("Press 1 or 2 to choose a mode", True, (90, 90, 90))
         self.screen.blit(hint, (SCREEN_WIDTH // 2 - hint.get_width() // 2, 460))
+
+        pause_hint = self.font.render("Press SPACE to pause", True, (60, 60, 60))
+        self.screen.blit(pause_hint, (SCREEN_WIDTH // 2 - pause_hint.get_width() // 2, 490))
+
+        # Glow on the selected button while waiting for sound to finish
+        if self.fade_pending_mode and self.fade_delay > 0:
+            glow_cy   = 255 if self.fade_pending_mode == "classic" else 325
+            glow_col  = (0, 220, 0) if self.fade_pending_mode == "classic" else (170, 60, 255)
+            glow_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            for i, alpha in enumerate([60, 35, 15]):
+                pad = (i + 1) * 4
+                pygame.draw.rect(glow_surf, (*glow_col, alpha),
+                                 (btn_x - pad, glow_cy - pad,
+                                  btn_w + pad * 2, btn_h + pad * 2), 2)
+            # Bright solid inner border on top
+            pygame.draw.rect(self.screen, glow_col,
+                             (btn_x - 2, glow_cy - 2, btn_w + 4, btn_h + 4), 2)
+            self.screen.blit(glow_surf, (0, 0))
+
+        # Fade to black overlay
+        if self.fade_alpha > 0:
+            fade_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            fade_surf.fill((0, 0, 0, self.fade_alpha))
+            self.screen.blit(fade_surf, (0, 0))
 
     def _draw_game_over(self):
         cx = self.screen_w // 2
