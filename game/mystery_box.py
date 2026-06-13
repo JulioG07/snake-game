@@ -6,7 +6,7 @@
 
 import pygame
 import random
-from game.settings import CELL_SIZE, GRID_WIDTH, GRID_HEIGHT, MYSTERY
+from game.settings import CELL_SIZE, GRID_WIDTH, GRID_HEIGHT, MYSTERY, WHITE
 
 # --- Effect pools ---
 # Add new effect names here as we build them out.
@@ -26,11 +26,11 @@ BAD_EFFECTS = [
 
 class MysteryBox:
     def __init__(self, grid_width=GRID_WIDTH, grid_height=GRID_HEIGHT):
-        # Store grid dimensions so spawn() picks a cell inside the right arena
         self.grid_width  = grid_width
         self.grid_height = grid_height
         self.position    = (0, 0)
-        self.active      = False   # False = not on the grid yet
+        self.active      = False
+        self.font        = pygame.font.SysFont("Arial", 20, bold=True)
 
     def spawn(self, occupied):
         # Pick a random cell that isn't already taken by the snake, food, etc.
@@ -61,13 +61,25 @@ class MysteryBox:
         return random.choice(pool)
 
     def draw(self, screen):
-        # Only draw if the box is currently on the grid
         if not self.active:
             return
 
         x, y = self.position
-        rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+        rx = x * CELL_SIZE
+        ry = y * CELL_SIZE
 
-        # Fill with mystery color, then a bright white border to make it pop
-        pygame.draw.rect(screen, MYSTERY, rect)
-        pygame.draw.rect(screen, (255, 255, 255), rect, 2)
+        # Deep purple fill
+        pygame.draw.rect(screen, (110, 30, 180), (rx, ry, CELL_SIZE, CELL_SIZE))
+
+        # Raised-border effect: light edge top/left, dark edge bottom/right
+        pygame.draw.line(screen, (180, 100, 255), (rx, ry), (rx + CELL_SIZE - 1, ry), 2)
+        pygame.draw.line(screen, (180, 100, 255), (rx, ry), (rx, ry + CELL_SIZE - 1), 2)
+        pygame.draw.line(screen, (50, 0, 90),  (rx + CELL_SIZE - 1, ry),
+                         (rx + CELL_SIZE - 1, ry + CELL_SIZE - 1), 2)
+        pygame.draw.line(screen, (50, 0, 90),  (rx, ry + CELL_SIZE - 1),
+                         (rx + CELL_SIZE - 1, ry + CELL_SIZE - 1), 2)
+
+        # White "?" centered in the cell
+        label = self.font.render("?", True, WHITE)
+        screen.blit(label, (rx + CELL_SIZE // 2 - label.get_width() // 2,
+                             ry + CELL_SIZE // 2 - label.get_height() // 2))
